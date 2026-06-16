@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>7-8월 여행 일정 조율</title>
+<style>
+    body { font-family: 'Malgun Gothic', sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
+    h2 { text-align: center; margin-top: 40px; }
+
+    #user-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.4); display: flex; justify-content: center; align-items: center; z-index: 1000;
+    }
+    #user-modal { background: white; padding: 30px; border-radius: 10px; text-align: center; }
+    .user-btn {
+        display: inline-block; margin: 5px; padding: 15px 20px; border: 1px solid #ddd;
+        border-radius: 8px; cursor: pointer; font-weight: bold;
+    }
+
+    .calendar-container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: #ccc; border: 1px solid #ccc; }
+    .day-header { background: #f9f9f9; text-align: center; padding: 10px 0; font-weight: bold; }
+    .day { background: #fff; aspect-ratio: 1 / 1; padding: 5px; cursor: pointer; position: relative; overflow: hidden; box-sizing: border-box; }
+    .day-number { position: absolute; top: 5px; right: 5px; font-size: 0.9em; color: #666; z-index: 2; }
+    
+    .event-name { position: absolute; top: 5px; left: 5px; font-size: 0.75em; font-weight: bold; color: #333; z-index: 2; }
+    .event-text { margin-top: 22px; font-size: 0.85em; line-height: 1.2; word-break: break-all; position: relative; z-index: 2; }
+
+    #input-overlay {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.5); display: none; justify-content: center; align-items: center; z-index: 1000;
+    }
+    #input-modal { background: white; padding: 20px; border-radius: 8px; width: 300px; text-align: center; }
+    #input-modal input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; }
+    #input-modal .date-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+    #input-modal .date-row input { width: 45%; margin: 0; }
+    
+    #input-modal button { padding: 8px 15px; cursor: pointer; margin: 0 2px; border: 1px solid #ccc; border-radius: 4px; background: #fff; }
+    #input-modal button:hover { background: #eee; }
+    #delete-btn { color: white; background-color: #ff6b6b !important; border-color: #ff6b6b !important; }
+    #delete-btn:hover { background-color: #ff5252 !important; }
+</style>
+</head>
+<body>
+
+<div id="user-overlay">
+    <div id="user-modal">
+        <h3>본인을 선택해주세요</h3>
+        <div id="user-buttons"></div>
+    </div>
+</div>
+
+<h2>2026년 7월</h2>
+<div class="calendar-container"><div class="grid" id="july-grid"></div></div>
+
+<h2>2026년 8월</h2>
+<div class="calendar-container"><div class="grid" id="august-grid"></div></div>
+
+<div id="input-overlay">
+    <div id="input-modal">
+        <h4 id="modal-title" style="margin-top:0;">일정 입력</h4>
+        <input type="text" id="schedule-input" placeholder="일정 내용을 적어주세요">
+        <div class="date-row">
+            <input type="date" id="start-date" readonly>
+            <span>~</span>
+            <input type="date" id="end-date" min="2026-07-01" max="2026-08-31">
+        </div>
+        <button onclick="saveSchedule()">저장</button>
+        <button id="delete-btn" onclick="deleteSchedule()" style="display: none;">삭제</button>
+        <button onclick="closeInputModal()">취소</button>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getDatabase, ref, set, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyC0lk4CXpCr5PlaJqTnb66rXAWf4D5brTQ",
+        authDomain: "sibal-2415c.firebaseapp.com",
+        databaseURL: "https://sibal-2415c-default-rtdb.firebaseio.com",
+        projectId: "sibal-2415c",
+        storageBucket: "sibal-2415c.firebasestorage.app",
+        messagingSenderId: "50356263999",
+        appId: "1:50356263999:web:2d7699d075c45545d1ec8a"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // 수정하신 멤버 정보 적용
+    const users = [
+        { name: "윤현석", color: "#ffcccc" }, { name: "황지민", color: "#cce0ff" },
+        { name: "아쎄이", color: "#ccffcc" }, { name: "조현욱", color: "#ffffcc" },
+        { name: "배성수", color: "#e6ccff" }, { name: "병신(이준서)", color: "#ffe6cc" }
+    ];
+
+    let currentUser = null;
+    let events = [];
+    let currentEditingId = null;
+
+    const userButtonsContainer = document.getElementById('user-buttons');
+    users.forEach(u => {
+        const btn = document.createElement('div');
+        btn.className = 'user-btn';
+        btn.style.backgroundColor = u.color;
+        btn.innerText = u.name;
+        btn.onclick = () => {
+            currentUser = u;
+            document.getElementById('user-overlay').style.display = 'none';
+        };
+        userButtonsContainer.appendChild(btn);
+    });
+
+    function renderCalendar(containerId, startDayOffset, daysInMonth, month) {
+        const grid = document.getElementById(containerId);
+        const daysOfWeek = ['일', '월', '화', '수', '목', '금', '토'];
+        
+        daysOfWeek.forEach(d => {
+            const header = document.createElement('div');
+            header.className = 'day-header';
+            header.innerText = d;
+            grid.appendChild(header);
+        });
+
+        for (let i = 0; i < startDayOffset; i++) {
+            const empty = document.createElement('div');
+            empty.className = 'day'; empty.style.backgroundColor = '#f9f9f9';
+            grid.appendChild(empty);
+        }
+
+        for (let i = 1; i <= daysInMonth; i++) {
+            const day = document.createElement('div');
+            day.className = 'day';
+            
+            const dateStr = `2026-${month.toString().padStart(2, '0')}-${i.toString().padStart(2, '0')}`;
+            day.dataset.date = dateStr;
+            
+            const dayNum = document.createElement('div');
+            dayNum.className = 'day-number';
+            dayNum.innerText = i;
+            day.appendChild(dayNum);
+
+            day.onclick = () => window.openInputModal(dateStr);
+            grid.appendChild(day);
+        }
+    }
+
+    renderCalendar('july-grid', 3, 31, 7);
+    renderCalendar('august-grid', 6, 31, 8);
+
+    const inputOverlay = document.getElementById('input-overlay');
+    const modalTitle = document.getElementById('modal-title');
+    const scheduleInput = document.getElementById('schedule-input');
+    const startDateInput = document.getElementById('start-date');
+    const endDateInput = document.getElementById('end-date');
+    const deleteBtn = document.getElementById('delete-btn');
+
+    window.openInputModal = function(dateStr) {
+        if (!currentUser) return;
+        
+        const existingEvent = events.find(ev => dateStr >= ev.startDate && dateStr <= ev.endDate);
+
+        if (existingEvent) {
+            modalTitle.innerText = "일정 수정/삭제";
+            scheduleInput.value = existingEvent.text;
+            startDateInput.value = existingEvent.startDate;
+            endDateInput.value = existingEvent.endDate;
+            currentEditingId = existingEvent.id;
+            deleteBtn.style.display = 'inline-block';
+        } else {
+            modalTitle.innerText = "일정 입력";
+            scheduleInput.value = '';
+            startDateInput.value = dateStr;
+            endDateInput.value = dateStr; 
+            endDateInput.min = dateStr;   
+            currentEditingId = null;
+            deleteBtn.style.display = 'none';
+        }
+
+        inputOverlay.style.display = 'flex';
+        scheduleInput.focus();
+    };
+
+    window.saveSchedule = function() {
+        const text = scheduleInput.value.trim();
+        const start = startDateInput.value;
+        const end = endDateInput.value;
+
+        if (text && start && end) {
+            const eventId = currentEditingId ? currentEditingId : 'evt_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            
+            const eventData = {
+                id: eventId,
+                userName: currentUser.name,
+                color: currentUser.color,
+                text: text,
+                startDate: start,
+                endDate: end
+            };
+            
+            set(ref(db, 'events/' + eventId), eventData);
+        }
+        window.closeInputModal();
+    };
+
+    window.deleteSchedule = function() {
+        if (currentEditingId) {
+            remove(ref(db, 'events/' + currentEditingId));
+            window.closeInputModal();
+        }
+    };
+
+    window.closeInputModal = function() {
+        inputOverlay.style.display = 'none';
+        scheduleInput.value = '';
+        currentEditingId = null;
+    };
+
+    function drawEvents() {
+        document.querySelectorAll('.day[data-date]').forEach(day => {
+            day.style.backgroundColor = '#fff';
+            day.querySelectorAll('.event-name, .event-text').forEach(el => el.remove());
+        });
+
+        events.forEach(ev => {
+            document.querySelectorAll('.day[data-date]').forEach(day => {
+                const currentDate = day.dataset.date;
+                if (currentDate >= ev.startDate && currentDate <= ev.endDate) {
+                    day.style.backgroundColor = ev.color;
+                    
+                    const nameDiv = document.createElement('div');
+                    nameDiv.className = 'event-name';
+                    nameDiv.innerText = ev.userName;
+
+                    const textDiv = document.createElement('div');
+                    textDiv.className = 'event-text';
+                    textDiv.innerText = ev.text;
+
+                    day.appendChild(nameDiv);
+                    day.appendChild(textDiv);
+                }
+            });
+        });
+    }
+
+    onValue(ref(db, 'events'), (snapshot) => {
+        const data = snapshot.val();
+        events = data ? Object.values(data) : [];
+        drawEvents();
+    });
+
+</script>
+</body>
+</html>
